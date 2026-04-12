@@ -1,0 +1,64 @@
+site_name: docat-upload
+repo_url: https://github.com/palto42/docat-upload
+site_url: https://palto42.github.io/docat-upload
+site_description: Tool for uploading HTML documentation to a docat server, as an alternative to docatl.
+site_author: Matthias Homann
+edit_uri: edit/main/docs/
+repo_name: palto42/docat-upload
+copyright: Maintained by <a href="https://github.com/{cookiecutter.author_github_handle}}.com">palto42</a>.
+nav:
+  - Home: index.md
+  - Overview: readme.md
+  - Authors: authors.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
+  - Modules: modules.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src/docat_upload"]
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            filters: ["!^__.*__$"]   # hide dunder methods like __init__
+
+theme:
+  name: material
+  features:
+    # - navigation.tabs  # Tabs on the top instead of right sidebar
+    # - toc.integrate  # Integriert das TOC in die linke Navigationsleiste
+    - navigation.sections
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/palto42/docat-upload
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/docat-upload
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences  # nesting code blocks in lists
