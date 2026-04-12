@@ -4,11 +4,6 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 jobs:
 
   set-version:
@@ -57,8 +52,15 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
-  build-docs:
+  deploy-docs:
     needs: publish
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -67,25 +69,14 @@ jobs:
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
       - name: Build documentation
-        run: uv run mkdocs build
+        run: uv run mkdocs build --clean
 
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
 
-  deploy-docs:
-    needs: build-docs
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
