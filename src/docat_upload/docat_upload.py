@@ -13,7 +13,7 @@ import requests
 import urllib3
 from dotenv import dotenv_values
 
-__version__ = version("girsh")
+__version__ = version("docat_upload")
 
 
 def upload_docs(

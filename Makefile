@@ -18,7 +18,14 @@ check: ## Run code quality tools.
 .PHONY: test
 test: ## Test the code with pytest
 	@echo "🚀 Testing code: Running pytest"
-	@uv run python -m pytest --cov --cov-config=pyproject.toml --cov-report=xml
+	@uv run python -m pytest --cov --cov-config=pyproject.toml --cov-report=xml --cov-report=term
+
+.PHONY: test-html
+test-html: ## Test the code with pytest, output coverage report to html
+	@echo "🚀 Testing code: Running pytest"
+	@uv run python -m pytest --cov --cov-config=pyproject.toml --cov-report=html
+	@echo "🚀 Coverage report generated at htmlcov/index.html"
+	@xdg-open htmlcov/index.html > /dev/null 2>&1 &
 
 .PHONY: build
 build: clean-build ## Build wheel file
