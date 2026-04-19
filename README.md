@@ -17,7 +17,7 @@ Extra features:
 
 - For Python documentation the script can extract the document version from the Python module with the same name as `project`.
 - Limit the number of published version with `-max-versions`
-  - The script will automatically delete older versions if the number of versions is exceeded
+    - The script will automatically delete older versions if the number of versions is exceeded
 - Specify custom SSL certificate path if an in-house CA is used.
 - Support insecure SSL for use with self signed certificates
 

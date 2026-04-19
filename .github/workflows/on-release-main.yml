@@ -4,17 +4,12 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 jobs:
 
   set-version:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Export tag
         id: vars
@@ -29,7 +24,7 @@ jobs:
         if: ${{ github.event_name == 'release' }}
 
       - name: Upload updated pyproject.toml
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pyproject-toml
           path: pyproject.toml
@@ -39,13 +34,13 @@ jobs:
     needs: [set-version]
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
 
       - name: Download updated pyproject.toml
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: pyproject-toml
 
@@ -57,35 +52,31 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
-  build-docs:
+  deploy-docs:
     needs: publish
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
       - name: Build documentation
-        run: uv run mkdocs build
+        run: uv run mkdocs build --clean
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
-  deploy-docs:
-    needs: build-docs
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
