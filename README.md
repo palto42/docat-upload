@@ -19,7 +19,9 @@ Extra features:
 - For Python documentation the script can extract the document version from the Python module with the same name as `project`.
 - Limit the number of published version with `-max-versions`
     - The script will automatically delete older versions if the number of versions is exceeded
+- Delete all current versions of a project with `--delete-project`
 - Specify custom SSL certificate path if an in-house CA is used.
+- Use the system CA bundle instead of requests' default certifi bundle with `--system-cert`.
 - Support insecure SSL for use with self signed certificates
 
 ## Usage
@@ -43,11 +45,38 @@ options:
   -m NUM, --max-versions NUM
                         Cut number of versions to max. NUM
   -d, --delete          Delete the specified version
+  --delete-project      Delete the entire project by removing all versions
   -V, --version         show program's version number and exit
   -i, --insecure        Don't check SSL cert
   -c SSL_CERT, --ssl-cert SSL_CERT
                         Path to SSL cert or cert bundle, e.g. /etc/ssl/certs/ca-certificates.crt
+  --system-cert         Use the system CA bundle instead of requests default certifi bundle
   -v, --verbose         Verbose output
+```
+
+### Example
+
+Upload a new documentation version to a project:
+
+```bash
+uv run python -m docat_upload.docat_upload \
+  -p my-project \
+  -s https://docat.example.com \
+  -a YOUR_API_KEY \
+  -f docs/_build/html \
+  -r 1.2.0 \
+  -t latest \
+  -m 5
+```
+
+Delete all versions of a project from the docat server:
+
+```bash
+uv run python -m docat_upload.docat_upload \
+  -p my-project \
+  -s https://docat.example.com \
+  -a YOUR_API_KEY \
+  --delete-project
 ```
 
 ### `.env` settings

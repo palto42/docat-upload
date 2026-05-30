@@ -4,6 +4,7 @@ import argparse
 import importlib
 import logging
 import re
+import ssl
 from importlib.metadata import version
 from json import JSONDecodeError
 from pathlib import Path
@@ -268,6 +269,78 @@ def delete_version(project: str, api_key: str | None, release: str, server: str,
     return False
 
 
+def delete_project(project: str, api_key: str | None, server: str, verify_ssl: str | bool = True) -> bool:
+    """Delete all versions of a project from the docat server.
+
+    Parameters
+    ----------
+    project : str
+        Name of the project on the docat server
+    api_key : str | None
+        API key of the project
+    server : str
+        Dcat server URL
+    verify_ssl : str | bool, optional
+        Verify SSL (True), path to certs or accept insecure SSL (False), by default True
+
+    Returns
+    -------
+    bool
+        True = successful
+    """
+    project_url = f"{server}/api/projects/{project}"
+    logger.debug("Fetching project versions from %s", project_url)
+    try:
+        response = requests.get(
+            project_url,
+            timeout=60,
+            verify=verify_ssl,
+        )
+    except requests.exceptions.SSLError as e:
+        logger.error("SSL error during project deletion: %s", e)  # noqa: TRY400
+        return False
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Connection error during project deletion: %s", e)  # noqa: TRY400
+        return False
+    try:
+        project_data = response.json()
+    except JSONDecodeError:
+        logger.exception("Failed to decode project version data for %s", project)
+        return False
+
+    versions = project_data.get("versions", [])
+    if not versions:
+        logger.info("No versions found for project %s", project)
+        return True
+
+    # Delete each version
+    for doc_version in versions:
+        name = doc_version.get("name")
+        if not name:
+            continue
+        logger.debug("Deleting version %s of project %s", name, project)
+        ok = delete_version(project=project, api_key=api_key, release=name, server=server, verify_ssl=verify_ssl)
+        if not ok:
+            logger.error("Failed to delete version %s of project %s", name, project)
+            return False
+
+    logger.info("Deleted all %d versions of project %s", len(versions), project)
+    return True
+
+
+def get_system_ca_bundle() -> str:
+    """Return the system CA bundle path for SSL verification."""
+    verify_paths = ssl.get_default_verify_paths()
+    if verify_paths.cafile:
+        logger.debug("Using system CA file %s", verify_paths.cafile)
+        return verify_paths.cafile
+    if verify_paths.capath:
+        logger.debug("Using system CA path %s", verify_paths.capath)
+        return verify_paths.capath
+    logger.error("Could not locate the system CA bundle")
+    raise FileNotFoundError("System CA bundle not found")  # noqa: TRY003
+
+
 def get_args() -> argparse.Namespace:
     """Parse CLI arguments
 
@@ -347,6 +420,11 @@ def get_args() -> argparse.Namespace:
         action="store_true",
     )
     parser.add_argument(
+        "--delete-project",
+        help="Delete the entire project by removing all versions",
+        action="store_true",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -363,7 +441,12 @@ def get_args() -> argparse.Namespace:
         "--ssl-cert",
         help="Path to SSL cert or cert bundle, e.g. /etc/ssl/certs/ca-certificates.crt",
         type=str,
-        default=config.get("CERT_PATH"),
+        default=None,
+    )
+    parser.add_argument(
+        "--system-cert",
+        help="Use the system CA bundle instead of requests default certifi bundle",
+        action="store_true",
     )
     parser.add_argument(
         "-v",
@@ -373,7 +456,10 @@ def get_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
-    if (args.delete or args.max_versions) and not args.api_key:
+    if args.ssl_cert is None and not args.system_cert:
+        args.ssl_cert = config.get("CERT_PATH")
+
+    if (args.delete or args.max_versions or args.delete_project) and not args.api_key:
         parser.error(
             "No API key provided as argument, environment variable 'DOCAT_API_KEY' or in '.env' file, but required when --max-versions is used"
         )
@@ -381,7 +467,7 @@ def get_args() -> argparse.Namespace:
     return args
 
 
-def main():
+def main():  # noqa: C901
     """Package documents and upload them to docat server"""
     args = get_args()
     configure_logging(args.verbose)
@@ -390,7 +476,24 @@ def main():
     if not args.insecure:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    verify_ssl = args.ssl_cert if args.ssl_cert else args.insecure
+    if args.system_cert:
+        verify_ssl = get_system_ca_bundle()
+    elif args.ssl_cert:
+        verify_ssl = args.ssl_cert
+    else:
+        verify_ssl = args.insecure
+
+    if args.delete_project:
+        return (
+            0
+            if delete_project(
+                project=args.project,
+                api_key=args.api_key,
+                server=args.server,
+                verify_ssl=verify_ssl,
+            )
+            else 1
+        )
 
     if args.release is None:
         module = importlib.import_module(args.project)
