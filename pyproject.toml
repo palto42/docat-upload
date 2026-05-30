@@ -1,6 +1,6 @@
 [project]
 name = "docat-upload"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tool for uploading HTML documentation to a docat server, as an alternative to docatl."
 authors = [{ name = "Matthias Homann", email = "palto@mailbox.org" }]
 readme = "README.md"

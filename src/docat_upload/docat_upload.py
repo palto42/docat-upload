@@ -2,7 +2,7 @@
 
 import argparse
 import importlib
-import os
+import logging
 import re
 from importlib.metadata import version
 from json import JSONDecodeError
@@ -12,6 +12,21 @@ from zipfile import ZipFile
 import requests
 import urllib3
 from dotenv import dotenv_values
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(verbose: bool = False) -> None:
+    """Configure logging for CLI output.
+
+    Parameters
+    ----------
+    verbose : bool
+        Whether to enable debug-level logging.
+    """
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(levelname)s: %(message)s")
+    logger.debug("Logging configured; verbose=%s", verbose)
+
 
 __version__ = version("docat_upload")
 
@@ -48,44 +63,43 @@ def upload_docs(
     """
     folder = Path(docs_folder)
     zip_file = folder.parent / Path("docs.zip")
+    logger.debug("Preparing documentation archive for folder %s", folder)
 
-    # create a ZipFile object
-    zipper = ZipFile(zip_file, "w")
-    # iterate over the folder and its subfolders
-    for file_path in folder.glob("**/*"):
-        # check if the path is a file (not a directory)
-        if file_path.is_file():
-            # write the file to the zip file with its relative path
-            zipper.write(file_path, file_path.relative_to(folder))
-    # close the zip file
-    zipper.close()
+    file_count = 0
+    with ZipFile(zip_file, "w") as zipper:
+        for file_path in folder.glob("**/*"):
+            if file_path.is_file():
+                zipper.write(file_path, file_path.relative_to(folder))
+                file_count += 1
+    logger.debug("Created zip archive %s containing %d files", zip_file, file_count)
 
-    print(f"Upload documentation for {project} v{release}")
+    logger.info("Upload documentation for %s v%s", project, release)
+    post_url = f"{server}/api/{project}/{release}"
+    headers = {"Docat-Api-Key": api_key} if api_key else {}
+    logger.debug("Sending upload request to %s with headers=%s verify_ssl=%s", post_url, headers, verify_ssl)
     try:
-        # Send the POST request to the API with the file attached
         response = requests.post(
-            f"{server}/api/{project}/{release}",
+            post_url,
             files={"file": zip_file.open("rb")},
             timeout=60,
-            headers={"Docat-Api-Key": api_key} if api_key else {},
+            headers=headers,
             verify=verify_ssl,
         )
     except requests.exceptions.SSLError as e:
-        print(f"SSL error: {e}")
+        logger.error("SSL error during upload: %s", e)  # noqa: TRY400
         return False
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error: {e}")
+        logger.error("Connection error during upload: %s", e)  # noqa: TRY400
         return False
 
-    # Delete zip file
     zip_file.unlink()
+    logger.debug("Deleted temporary zip archive %s", zip_file)
 
-    # check the status code of the response
     if not response.ok:
-        print(f"Failed to upload documentation: {response.reason}")
+        logger.error("Failed to upload documentation: %s", response.reason)
         return False
 
-    print(f"Documentation version {release} for {project} uploaded successfully")
+    logger.info("Documentation version %s for %s uploaded successfully", release, project)
     return True
 
 
@@ -114,23 +128,26 @@ def tag_release(
     bool
         True = successful
     """
+    tag_url = f"{server}/api/{project}/{release}/tags/{tag}"
+    logger.debug("Tagging release %s at %s", release, tag_url)
     try:
         response = requests.put(
-            f"{server}/api/{project}/{release}/tags/{tag}",
+            tag_url,
             timeout=60,
             headers={"Docat-Api-Key": api_key} if api_key else None,
             verify=verify_ssl,
         )
     except requests.exceptions.SSLError as e:
-        print(f"SSL error: {e}")
+        logger.error("SSL error during tagging: %s", e)  # noqa: TRY400
         return False
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error: {e}")
+        logger.error("Connection error during tagging: %s", e)  # noqa: TRY400
         return False
+    logger.debug("Tag request returned status code %s", response.status_code)
     if response.status_code == 201:
-        print(f"Tagged {project} version {release} of  as '{tag}'")
+        logger.info("Tagged %s version %s as '%s'", project, release, tag)
     else:
-        print(f"Failed to tag version {release} of project {project}: {response.reason}")
+        logger.error("Failed to tag version %s of project %s: %s", release, project, response.reason)
         return False
     return True
 
@@ -158,39 +175,52 @@ def prune_versions(
     bool
         True = successful
     """
+    project_url = f"{server}/api/projects/{project}"
+    logger.debug("Fetching project versions from %s", project_url)
     try:
         response = requests.get(
-            f"{server}/api/projects/{project}",
+            project_url,
             timeout=60,
             verify=verify_ssl,
         )
     except requests.exceptions.SSLError as e:
-        print(f"SSL error: {e}")
+        logger.error("SSL error during version pruning: %s", e)  # noqa: TRY400
         return False
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error: {e}")
+        logger.error("Connection error during version pruning: %s", e)  # noqa: TRY400
         return False
     try:
         project_data = response.json()
     except JSONDecodeError:
-        print(f"Failed to fetch versions for project {project}")
+        logger.exception("Failed to decode project version data for %s", project)
         return False
     versions = project_data["versions"]
+    version_names = [version_info["name"] for version_info in versions]
+    logger.debug("Received versions for project %s: %s", project, version_names)
     sorted_versions = sorted(versions, key=lambda x: tuple(map(int, x["name"].split("."))))
     if len(versions) <= max_versions:
-        print(f"Nothing to delete, only {len(versions)} available")
+        logger.info("Nothing to delete, only %d available", len(versions))
         return True
+    delete_urls = [f"{server}/api/{project}/{doc_version['name']}" for doc_version in sorted_versions[:-max_versions]]
+    logger.debug("Pruning versions: %s", delete_urls)
     for doc_version in sorted_versions[:-max_versions]:
+        delete_url = f"{server}/api/{project}/{doc_version['name']}"
+        logger.debug("Deleting version %s via %s", doc_version["name"], delete_url)
         response = requests.delete(
-            f"{server}api/{project}/{doc_version['name']}",
+            delete_url,
             headers={"Docat-Api-Key": api_key} if api_key else None,
             timeout=60,
             verify=verify_ssl,
         )
         if response.status_code == 200:
-            print(f"Deleted version {doc_version['name']} of project {project}")
+            logger.info("Deleted version %s of project %s", doc_version["name"], project)
         else:
-            print(f"Failed to delete version {doc_version['name']} of project {project}: {response.reason}")
+            logger.error(
+                "Failed to delete version %s of project %s: %s",
+                doc_version["name"],
+                project,
+                response.reason,
+            )
             return False
     return True
 
@@ -216,52 +246,26 @@ def delete_version(project: str, api_key: str | None, release: str, server: str,
     bool
         True = successful
     """
+    delete_url = f"{server}/api/{project}/{release}"
+    logger.debug("Deleting version %s for project %s at %s", release, project, delete_url)
     try:
         response = requests.delete(
-            f"{server}api/{project}/{release}",
+            delete_url,
             headers={"Docat-Api-Key": api_key} if api_key else None,
             timeout=60,
             verify=verify_ssl,
         )
     except requests.exceptions.SSLError as e:
-        print(f"SSL error: {e}")
+        logger.error("SSL error during deletion: %s", e)  # noqa: TRY400
         return False
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error: {e}")
+        logger.error("Connection error during deletion: %s", e)  # noqa: TRY400
         return False
     if response.status_code == 200:
-        print(f"Deleted {project} version {release}.")
+        logger.info("Deleted %s version %s.", project, release)
         return True
-    print(f"Failed to delete version {release} of project {project}: {response.reason}")
+    logger.error("Failed to delete version %s of project %s: %s", release, project, response.reason)
     return False
-
-
-def get_env(env_key: str) -> str | None:
-    """Get environment variable from .env file or environment
-
-    Parameters
-    ----------
-    env_key : str
-        Name of the environment variable
-
-    Returns
-    -------
-    str | None
-        Value of the variable or None if not defined.
-    """
-    try:
-        with open(".env", encoding="utf-8") as file:
-            for line in file:
-                if line.startswith(f"{env_key}="):
-                    try:
-                        return re.split(r"=|\s", line)[1]
-                    except IndexError:
-                        return None
-    except FileNotFoundError:
-        pass
-    except PermissionError:
-        print("WARNING: No permission to read '.env' file.")
-    return os.getenv(env_key)
 
 
 def get_args() -> argparse.Namespace:
@@ -361,6 +365,12 @@ def get_args() -> argparse.Namespace:
         type=str,
         default=config.get("CERT_PATH"),
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Verbose output",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     if (args.delete or args.max_versions) and not args.api_key:
@@ -374,6 +384,8 @@ def get_args() -> argparse.Namespace:
 def main():
     """Package documents and upload them to docat server"""
     args = get_args()
+    configure_logging(args.verbose)
+    logger.debug("Parsed command line arguments: %s", args)
 
     if not args.insecure:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -386,9 +398,10 @@ def main():
             args.release = module.__version__
         except AttributeError:
             args.release = "unknown"
-    # Check if new release should be published
+    logger.debug("Using release version %s", args.release)
+
     if not re.match(r"^((0|[1-9]\d*)\.?)*$", args.release):
-        print(f"Skip upload of un-released version '{args.release}'")
+        logger.info("Skip upload of un-released version '%s'", args.release)
         return
 
     if args.delete:
