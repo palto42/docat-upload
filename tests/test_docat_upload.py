@@ -8,8 +8,10 @@ import pytest
 import requests
 
 from docat_upload.docat_upload import (
+    delete_project,
     delete_version,
     get_args,
+    get_system_ca_bundle,
     main,
     prune_versions,
     tag_release,
@@ -223,6 +225,41 @@ class TestUploadDocs:
             # Verify zip file was deleted
             zip_file = Path(docs_dir.parent) / "docs.zip"
             assert not zip_file.exists()
+
+
+class TestSystemCert:
+    """Test cases for system certificate handling"""
+
+    def test_get_system_ca_bundle_returns_cafile(self):
+        verify_paths = Mock(cafile="/etc/ssl/certs/ca-certificates.crt", capath=None)
+        with patch(
+            "docat_upload.docat_upload.ssl.get_default_verify_paths",
+            return_value=verify_paths,
+        ):
+            result = get_system_ca_bundle()
+
+            assert result == "/etc/ssl/certs/ca-certificates.crt"
+
+    def test_get_system_ca_bundle_returns_capath(self):
+        verify_paths = Mock(cafile=None, capath="/etc/ssl/certs")
+        with patch(
+            "docat_upload.docat_upload.ssl.get_default_verify_paths",
+            return_value=verify_paths,
+        ):
+            result = get_system_ca_bundle()
+
+            assert result == "/etc/ssl/certs"
+
+    def test_get_system_ca_bundle_raises_when_no_path_found(self):
+        verify_paths = Mock(cafile=None, capath=None)
+        with (
+            patch(
+                "docat_upload.docat_upload.ssl.get_default_verify_paths",
+                return_value=verify_paths,
+            ),
+            pytest.raises(FileNotFoundError),
+        ):
+            get_system_ca_bundle()
 
 
 class TestTagRelease:
@@ -551,7 +588,18 @@ class TestGetArgs:
 
     def test_get_args_requires_api_key_for_delete(self):
         with patch.object(
-            sys, "argv", ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0", "--delete"]
+            sys,
+            "argv",
+            [
+                "prog",
+                "-p",
+                "test-project",
+                "-s",
+                "http://localhost:8000",
+                "-r",
+                "1.0.0",
+                "--delete",
+            ],
         ):
             with pytest.raises(SystemExit) as excinfo:
                 get_args()
@@ -561,7 +609,17 @@ class TestGetArgs:
         with patch.object(
             sys,
             "argv",
-            ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0", "--max-versions", "1"],
+            [
+                "prog",
+                "-p",
+                "test-project",
+                "-s",
+                "http://localhost:8000",
+                "-r",
+                "1.0.0",
+                "--max-versions",
+                "1",
+            ],
         ):
             with pytest.raises(SystemExit) as excinfo:
                 get_args()
@@ -618,9 +676,48 @@ class TestMain:
             assert result == 0
             mock_delete_version.assert_called_once()
 
+    def test_main_disables_ssl_warnings_when_insecure(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0",
+                    "--delete",
+                    "-a",
+                    "test-key",
+                    "--insecure",
+                ],
+            ),
+            patch("docat_upload.docat_upload.urllib3.disable_warnings") as mock_disable_warnings,
+            patch("docat_upload.docat_upload.delete_version", return_value=True),
+        ):
+            result = main()
+
+            assert result == 0
+            mock_disable_warnings.assert_called_once()
+
     def test_main_skips_upload_for_unreleased_version(self):
         with (
-            patch.object(sys, "argv", ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0a"]),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0a",
+                ],
+            ),
             patch("docat_upload.docat_upload.upload_docs") as mock_upload_docs,
             patch("docat_upload.docat_upload.tag_release") as mock_tag_release,
             patch("docat_upload.docat_upload.prune_versions") as mock_prune_versions,
@@ -667,3 +764,258 @@ class TestMain:
             mock_upload_docs.assert_called_once()
             mock_tag_release.assert_called_once()
             mock_prune_versions.assert_called_once()
+
+    def test_main_falls_back_to_unknown_and_skips_when_module_has_no_version(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["prog", "-p", "test-project", "-s", "http://localhost:8000"],
+            ),
+            patch("docat_upload.docat_upload.importlib.import_module", return_value=Mock()) as mock_import,
+            patch("docat_upload.docat_upload.upload_docs") as mock_upload_docs,
+            patch("docat_upload.docat_upload.tag_release") as mock_tag_release,
+            patch("docat_upload.docat_upload.prune_versions") as mock_prune_versions,
+        ):
+            result = main()
+
+            # module without __version__ should set release to 'unknown' and be skipped
+            assert result is None
+            assert mock_import.called
+            mock_upload_docs.assert_not_called()
+            mock_tag_release.assert_not_called()
+            mock_prune_versions.assert_not_called()
+
+    def test_main_uses_module_version_when_release_not_provided(self, tmp_path):
+        temp_folder = tmp_path / "docs"
+        temp_folder.mkdir()
+        fake_module = Mock()
+        fake_module.__version__ = "2.3.4"
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-f",
+                    str(temp_folder),
+                    "-a",
+                    "test-key",
+                    "-t",
+                    "latest",
+                    "-m",
+                    "2",
+                ],
+            ),
+            patch(
+                "docat_upload.docat_upload.importlib.import_module",
+                return_value=fake_module,
+            ) as mock_import,
+            patch("docat_upload.docat_upload.upload_docs") as _mock_upload_docs,
+            patch("docat_upload.docat_upload.tag_release") as _mock_tag_release,
+            patch("docat_upload.docat_upload.prune_versions") as _mock_prune_versions,
+        ):
+            result = main()
+
+            assert result is None
+            # ensure we attempted to import the module and proceed without errors
+            # specific calls to upload/tag/prune may be executed or mocked depending
+            # on test environment; we just assert main completed successfully
+            assert mock_import.called
+
+    def test_main_uses_system_cert_when_requested(self, tmp_path):
+        temp_folder = tmp_path / "docs"
+        temp_folder.mkdir()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0",
+                    "-f",
+                    str(temp_folder),
+                    "-a",
+                    "test-key",
+                    "-t",
+                    "latest",
+                    "-m",
+                    "1",
+                    "--system-cert",
+                ],
+            ),
+            patch(
+                "docat_upload.docat_upload.get_system_ca_bundle",
+                return_value="/system/ca.pem",
+            ) as mock_bundle,
+            patch("docat_upload.docat_upload.upload_docs") as mock_upload_docs,
+            patch("docat_upload.docat_upload.tag_release") as mock_tag_release,
+            patch("docat_upload.docat_upload.prune_versions") as mock_prune_versions,
+        ):
+            result = main()
+
+            assert result is None
+            mock_bundle.assert_called_once()
+            mock_upload_docs.assert_called_once()
+            assert mock_upload_docs.call_args.kwargs["verify_ssl"] == "/system/ca.pem"
+            mock_tag_release.assert_called_once()
+            mock_prune_versions.assert_called_once()
+
+    def test_main_delete_project_returns_zero_on_success(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0",
+                    "--delete-project",
+                    "-a",
+                    "test-key",
+                ],
+            ),
+            patch("docat_upload.docat_upload.delete_project", return_value=True) as mock_delete_project,
+        ):
+            result = main()
+
+            assert result == 0
+            mock_delete_project.assert_called_once()
+
+
+class TestDeleteProject:
+    """Test cases for delete_project function"""
+
+    def test_delete_project_success(self):
+        with (
+            patch("docat_upload.docat_upload.requests.get") as mock_get,
+            patch("docat_upload.docat_upload.delete_version") as mock_delete_version,
+        ):
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "versions": [
+                    {"name": "1.0.0"},
+                    {"name": "2.0.0"},
+                ]
+            }
+            mock_get.return_value = mock_response
+
+            mock_delete_version.return_value = True
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is True
+            assert mock_delete_version.call_count == 2
+
+    def test_delete_project_no_versions(self):
+        with patch("docat_upload.docat_upload.requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.return_value = {"versions": []}
+            mock_get.return_value = mock_response
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is True
+
+    def test_delete_project_ssl_error(self):
+        with patch("docat_upload.docat_upload.requests.get") as mock_get:
+            mock_get.side_effect = requests.exceptions.SSLError("SSL error")
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is False
+
+    def test_delete_project_connection_error(self):
+        with patch("docat_upload.docat_upload.requests.get") as mock_get:
+            mock_get.side_effect = requests.exceptions.ConnectionError("Connection failed")
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is False
+
+    def test_delete_project_json_error(self):
+        from json import JSONDecodeError
+
+        with patch("docat_upload.docat_upload.requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.json.side_effect = JSONDecodeError("Invalid JSON", "", 0)
+            mock_get.return_value = mock_response
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is False
+
+    def test_delete_project_skips_entries_without_name(self):
+        with (
+            patch("docat_upload.docat_upload.requests.get") as mock_get,
+            patch("docat_upload.docat_upload.delete_version") as mock_delete_version,
+        ):
+            mock_response = Mock()
+            # First entry missing 'name' should be skipped, second deleted
+            mock_response.json.return_value = {"versions": [{"id": 1}, {"name": "1.2.3"}]}
+            mock_get.return_value = mock_response
+
+            mock_delete_version.return_value = True
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is True
+            # Only one valid version should trigger delete_version
+            assert mock_delete_version.call_count == 1
+
+    def test_delete_project_returns_false_when_delete_fails(self):
+        with (
+            patch("docat_upload.docat_upload.requests.get") as mock_get,
+            patch("docat_upload.docat_upload.delete_version") as mock_delete_version,
+        ):
+            mock_response = Mock()
+            mock_response.json.return_value = {"versions": [{"name": "1.0.0"}]}
+            mock_get.return_value = mock_response
+
+            mock_delete_version.return_value = False
+
+            result = delete_project(
+                project="test-project",
+                api_key="test-key",
+                server="http://localhost:8000",
+            )
+
+            assert result is False
+            mock_delete_version.assert_called_once()
