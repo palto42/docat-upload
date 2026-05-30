@@ -64,9 +64,9 @@ Please note this documentation assumes you already have `uv` and `Git` installed
 
    - Then, install and activate the environment with:
 
-    ```bash
-    uv sync
-    ```
+     ```bash
+     uv sync
+     ```
 
 4. Install pre-commit to run linters/formatters at commit time:
 
@@ -90,9 +90,9 @@ Please note this documentation assumes you already have `uv` and `Git` installed
 
    - Now, validate that all unit tests are passing:
 
-    ```bash
-    make test
-    ```
+     ```bash
+     make test
+     ```
 
 8. Before raising a pull request you should also run tox.
    This will run the tests across different versions of Python:
