@@ -46,6 +46,7 @@ options:
   -i, --insecure        Don't check SSL cert
   -c SSL_CERT, --ssl-cert SSL_CERT
                         Path to SSL cert or cert bundle, e.g. /etc/ssl/certs/ca-certificates.crt
+  -v, --verbose         Verbose output
 ```
 
 ### `.env` settings
