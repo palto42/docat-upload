@@ -1,14 +1,16 @@
 """Test cases for docat_upload module"""
 
-import os
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 import requests
 
 from docat_upload.docat_upload import (
     delete_version,
-    get_env,
+    get_args,
+    main,
     prune_versions,
     tag_release,
     upload_docs,
@@ -544,42 +546,124 @@ class TestPruneVersions:
             assert "1.0.0" in call_args
 
 
-class TestGetEnv:
-    """Test cases for get_env function"""
+class TestGetArgs:
+    """Test cases for CLI argument parsing"""
 
-    def test_get_env_from_environment(self):
-        """Test getting environment variable from os.environ"""
-        with patch.dict(os.environ, {"TEST_VAR": "test_value"}):
-            result = get_env("TEST_VAR")
-            assert result == "test_value"
+    def test_get_args_requires_api_key_for_delete(self):
+        with patch.object(
+            sys, "argv", ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0", "--delete"]
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                get_args()
+            assert excinfo.value.code == 2
 
-    def test_get_env_from_env_file(self, tmp_path):
-        """Test getting environment variable from .env file"""
-        env_file = tmp_path / ".env"
-        env_file.write_text("TEST_VAR=file_value\n")
+    def test_get_args_requires_api_key_for_max_versions(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0", "--max-versions", "1"],
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                get_args()
+            assert excinfo.value.code == 2
 
-        with patch("builtins.open", create=True) as mock_open:
-            mock_open.return_value.__enter__.return_value = env_file.open("r")
+    def test_get_args_reads_defaults_from_env_file(self):
+        with (
+            patch(
+                "docat_upload.docat_upload.dotenv_values",
+                return_value={
+                    "DOCAT_PROJECT": "file-project",
+                    "DOCAT_SERVER": "http://localhost:8000",
+                    "DOCAT_SOURCE": "docs",
+                    "DOCAT_API_KEY": "file-key",
+                    "DOCAT_MAX_VERSIONS": "3",
+                },
+            ),
+            patch.object(sys, "argv", ["prog", "-p", "file-project"]),
+        ):
+            args = get_args()
 
-            # Change to tmp_path to have .env in current directory
-            with patch("os.path.exists", return_value=True), patch("os.getcwd", return_value=str(tmp_path)):
-                _result = get_env("TEST_VAR")
+            assert args.project == "file-project"
+            assert args.server == "http://localhost:8000"
+            assert args.folder == "docs"
+            assert args.api_key == "file-key"
+            assert args.max_versions == 3
 
-    def test_get_env_not_found(self):
-        """Test getting non-existent environment variable"""
-        with patch.dict(os.environ, {}, clear=True):
-            result = get_env("NON_EXISTENT_VAR")
+
+class TestMain:
+    """Test cases for main() application flow"""
+
+    def test_main_delete_returns_zero_on_success(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0",
+                    "--delete",
+                    "-a",
+                    "test-key",
+                ],
+            ),
+            patch("docat_upload.docat_upload.delete_version", return_value=True) as mock_delete_version,
+        ):
+            result = main()
+
+            assert result == 0
+            mock_delete_version.assert_called_once()
+
+    def test_main_skips_upload_for_unreleased_version(self):
+        with (
+            patch.object(sys, "argv", ["prog", "-p", "test-project", "-s", "http://localhost:8000", "-r", "1.0.0a"]),
+            patch("docat_upload.docat_upload.upload_docs") as mock_upload_docs,
+            patch("docat_upload.docat_upload.tag_release") as mock_tag_release,
+            patch("docat_upload.docat_upload.prune_versions") as mock_prune_versions,
+        ):
+            result = main()
+
             assert result is None
+            mock_upload_docs.assert_not_called()
+            mock_tag_release.assert_not_called()
+            mock_prune_versions.assert_not_called()
 
-    def test_get_env_file_not_found(self):
-        """Test when .env file does not exist"""
-        result = get_env("SOME_VAR")
-        # Should fall back to os.getenv which returns None
-        assert result is None
+    def test_main_calls_upload_tag_and_prune(self, tmp_path):
+        temp_folder = tmp_path / "docs"
+        temp_folder.mkdir()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prog",
+                    "-p",
+                    "test-project",
+                    "-s",
+                    "http://localhost:8000",
+                    "-r",
+                    "1.0.0",
+                    "-f",
+                    str(temp_folder),
+                    "-a",
+                    "test-key",
+                    "-t",
+                    "latest",
+                    "-m",
+                    "2",
+                ],
+            ),
+            patch("docat_upload.docat_upload.upload_docs") as mock_upload_docs,
+            patch("docat_upload.docat_upload.tag_release") as mock_tag_release,
+            patch("docat_upload.docat_upload.prune_versions") as mock_prune_versions,
+        ):
+            result = main()
 
-    def test_get_env_permission_error(self):
-        """Test handling permission error when reading .env"""
-        with patch("builtins.open", side_effect=PermissionError()), patch.dict(os.environ, {"TEST_VAR": "env_value"}):
-            result = get_env("TEST_VAR")
-            # Should fall back to environment variable
-            assert result == "env_value"
+            assert result is None
+            mock_upload_docs.assert_called_once()
+            mock_tag_release.assert_called_once()
+            mock_prune_versions.assert_called_once()

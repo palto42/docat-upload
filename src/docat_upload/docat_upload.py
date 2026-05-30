@@ -3,7 +3,6 @@
 import argparse
 import importlib
 import logging
-import os
 import re
 from importlib.metadata import version
 from json import JSONDecodeError
@@ -267,34 +266,6 @@ def delete_version(project: str, api_key: str | None, release: str, server: str,
         return True
     logger.error("Failed to delete version %s of project %s: %s", release, project, response.reason)
     return False
-
-
-def get_env(env_key: str) -> str | None:
-    """Get environment variable from .env file or environment
-
-    Parameters
-    ----------
-    env_key : str
-        Name of the environment variable
-
-    Returns
-    -------
-    str | None
-        Value of the variable or None if not defined.
-    """
-    try:
-        with open(".env", encoding="utf-8") as file:
-            for line in file:
-                if line.startswith(f"{env_key}="):
-                    try:
-                        return re.split(r"=|\s", line)[1]
-                    except IndexError:
-                        return None
-    except FileNotFoundError:
-        logger.debug("No .env file found when reading %s", env_key)
-    except PermissionError:
-        logger.warning("No permission to read '.env' file.")
-    return os.getenv(env_key)
 
 
 def get_args() -> argparse.Namespace:
