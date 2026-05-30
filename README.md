@@ -1,6 +1,7 @@
 # docat-upload
 
-[![Release](https://img.shields.io/github/v/release/palto42/docat-upload)](https://github.com/palto42/docat-upload/releases)
+![python version](https://img.shields.io/badge/python-3.10+-blue.svg)
+[![PyPI](https://img.shields.io/pypi/v/girsh)](https://pypi.org/project/docat-upload)
 [![Build status](https://img.shields.io/github/actions/workflow/status/palto42/docat-upload/main.yml?branch=main)](https://github.com/palto42/docat-upload/actions/workflows/main.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/palto42/docat-upload/branch/main/graph/badge.svg)](https://codecov.io/gh/palto42/docat-upload)
 [![Commit activity](https://img.shields.io/github/commit-activity/m/palto42/docat-upload)](https://github.com/palto42/docat-upload/graphs/commit-activity)
